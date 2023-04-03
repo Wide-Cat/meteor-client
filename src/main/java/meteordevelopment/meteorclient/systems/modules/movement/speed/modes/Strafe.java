@@ -21,29 +21,30 @@ public class Strafe extends SpeedMode {
     }
 
     private long timer = 0L;
+    private StrafeMode stage = StrafeMode.Jump;
 
     @Override
     public void onMove(PlayerMoveEvent event) {
         switch (stage) {
-            case 0: //Reset
-                if (PlayerUtils.isMoving()) {
-                    stage++;
-                    speed = 1.18f * getDefaultSpeed() - 0.01;
-                }
-            case 1: //Jump
+            case Jump -> {
                 if (!PlayerUtils.isMoving() || !mc.player.isOnGround()) break;
 
                 ((IVec3d) event.movement).setY(getHop(0.40123128));
+                speed = 1.18f * getDefaultSpeed() - 0.01;
                 speed *= settings.ncpSpeed.get();
-                stage++;
-                break;
-            case 2: speed = distance - 0.76 * (distance - getDefaultSpeed()); stage++; break; //Slowdown after jump
-            case 3: //Reset on collision or predict and update speed
-                if (!mc.world.isSpaceEmpty(mc.player.getBoundingBox().offset(0.0, mc.player.getVelocity().y, 0.0)) || mc.player.verticalCollision && stage > 0) {
-                    stage = 0;
+
+                stage = StrafeMode.Slowdown;
+            }
+            case Slowdown -> {
+                speed = distance - 0.76 * (distance - getDefaultSpeed());
+                stage = StrafeMode.Fall;
+            }
+            case Fall -> {  // Reset on collision or predict and update speed
+                if (!mc.world.isSpaceEmpty(mc.player.getBoundingBox().offset(0.0, mc.player.getVelocity().y, 0.0)) || mc.player.verticalCollision && stage != StrafeMode.Jump) {
+                    stage = StrafeMode.Jump;
                 }
                 speed = distance - (distance / 159.0);
-                break;
+            }
         }
 
         speed = Math.max(speed, getDefaultSpeed());
@@ -58,54 +59,39 @@ public class Strafe extends SpeedMode {
 
         Vector2d change = transformStrafe(speed);
 
-        double velX = change.x;
-        double velZ = change.y;
-
         Anchor anchor = Modules.get().get(Anchor.class);
         if (anchor.isActive() && anchor.controlMovement) {
-            velX = anchor.deltaX;
-            velZ = anchor.deltaZ;
+            change.set(anchor.deltaX, anchor.deltaZ);
         }
 
-        ((IVec3d) event.movement).setXZ(velX, velZ);
-    }
-
-    private Vector2d transformStrafe(double speed) {
-        float forward = mc.player.input.movementForward;
-        float side = mc.player.input.movementSideways;
-        float yaw = mc.player.prevYaw + (mc.player.getYaw() - mc.player.prevYaw) * mc.getTickDelta();
-
-        double velX, velZ;
-
-        if (forward == 0.0f && side == 0.0f) return new Vector2d(0, 0);
-
-        else if (forward != 0.0f) {
-            if (side >= 1.0f) {
-                yaw += (float) (forward > 0.0f ? -45 : 45);
-                side = 0.0f;
-            } else if (side <= -1.0f) {
-                yaw += (float) (forward > 0.0f ? 45 : -45);
-                side = 0.0f;
-            }
-
-            if (forward > 0.0f)
-                forward = 1.0f;
-
-            else if (forward < 0.0f)
-                forward = -1.0f;
-        }
-
-        double mx = Math.cos(Math.toRadians(yaw + 90.0f));
-        double mz = Math.sin(Math.toRadians(yaw + 90.0f));
-
-        velX = (double) forward * speed * mx + (double) side * speed * mz;
-        velZ = (double) forward * speed * mz - (double) side * speed * mx;
-
-        return new Vector2d(velX, velZ);
+        ((IVec3d) event.movement).setXZ(change.x, change.y);
     }
 
     @Override
     public void onTick() {
         distance = Math.sqrt((mc.player.getX() - mc.player.prevX) * (mc.player.getX() - mc.player.prevX) + (mc.player.getZ() - mc.player.prevZ) * (mc.player.getZ() - mc.player.prevZ));
+    }
+
+    private Vector2d transformStrafe(double speed) {
+        float yaw = mc.player.getYaw();
+        float moveForward = Math.signum(mc.player.input.movementForward);
+        float moveSide = Math.signum(mc.player.input.movementSideways);
+
+        if (moveForward == 0 && moveSide == 0) return new Vector2d(0, 0);
+
+        float strafe = 90 * moveSide;
+        strafe *= (moveForward != 0 ? moveForward * 0.5 : 1);
+
+        yaw = yaw - strafe;
+        yaw -= (moveForward < 0 ? 180 : 0);
+        double yawRadians = Math.toRadians(yaw);
+
+        return new Vector2d(-Math.sin(yawRadians) * speed, Math.cos(yawRadians) * speed);
+    }
+
+    private enum StrafeMode {
+        Jump,
+        Slowdown,
+        Fall
     }
 }
