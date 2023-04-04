@@ -19,4 +19,10 @@ public interface ChatHudAccessor {
 
     @Accessor("messages")
     List<ChatHudLine> getMessages();
+
+    @Accessor("scrolledLines")
+    int getScrolledLines();
+
+    @Accessor("hasUnreadNewMessages")
+    void setHasUnreadNewMessages(boolean hasUnreadNewMessages);
 }

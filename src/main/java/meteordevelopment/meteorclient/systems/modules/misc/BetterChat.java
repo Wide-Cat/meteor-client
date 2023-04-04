@@ -15,11 +15,10 @@ import meteordevelopment.meteorclient.systems.commands.Commands;
 import meteordevelopment.meteorclient.systems.modules.Categories;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.Utils;
-import meteordevelopment.meteorclient.utils.misc.text.TextUtils;
 import meteordevelopment.meteorclient.utils.player.ChatUtils;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.gui.hud.ChatHudLine;
-import net.minecraft.client.gui.hud.MessageIndicator;
+import net.minecraft.client.gui.screen.ChatScreen;
 import net.minecraft.client.util.ChatMessages;
 import net.minecraft.text.*;
 import net.minecraft.util.Formatting;
@@ -107,13 +106,12 @@ public class BetterChat extends Module {
     );
 
     private final Setting<List<String>> regexFilters = sgFilter.add(new StringListSetting.Builder()
-        .name("regex-filter")
-        .description("Regex filter used for filtering chat messages.")
+        .name("regex-filters")
+        .description("Regex filters used for filtering chat messages.")
         .visible(filterRegex::get)
         .onChanged(strings -> compileFilterRegexList())
         .build()
     );
-
 
     // Longer chat
 
@@ -233,6 +231,18 @@ public class BetterChat extends Module {
             }
         }
 
+        if (playerHeads.get()) {
+            message = Text.literal("  ").append(message);
+        }
+
+        if (antiSpam.get()) {
+            Text antiSpammed = appendAntiSpam(message);
+
+            if (antiSpammed != null) {
+                message = antiSpammed;
+            }
+        }
+
         if (timestamps.get()) {
             Matcher matcher = timestampRegex.matcher(message.getString());
             if (matcher.matches()) message.getSiblings().subList(0, 8).clear();
@@ -242,73 +252,35 @@ public class BetterChat extends Module {
             message = Text.literal("").append(timestamp).append(message);
         }
 
-        if (playerHeads.get()) {
-            message = Text.literal("  ").append(message);
-        }
-
-        if (antiSpam.get()) {
-            Text antiSpammed = fixedAppendAntiSpam(message, event.getIndicator());
-
-            if (antiSpammed != null) {
-                message = antiSpammed;
-            }
-        }
-
         event.setMessage(message);
     }
 
     /*
-     *  Keeping the core logic, but rewritten to use check ChatHud.visibleMessages, since ChatHud.messages and ChatHud.visibleMessages will often have different
-     *  index positions for their messages and handling it otherwise would be a pain.
-     *
-     *  TODO - take timestamps into account
+     *  Rewritten once again to only check against and remove from ChatHud.messages, and to then recalculate all of ChatHud.visibleMessages. Not having to handle lines
+     *  and such makes the whole process a lot easier and neatly handles multi-line messages
      */
-    private Text fixedAppendAntiSpam(Text text, MessageIndicator indicator) {
+    private Text appendAntiSpam(Text text) {
         Text returnText = null;
-
-        int width = MathHelper.floor((double) mc.inGameHud.getChatHud().getWidth() / mc.inGameHud.getChatHud().getChatScale());
-        if (indicator != null && indicator.icon() != null) {
-            width -= indicator.icon().width + 4 + 2;
-        }
-        List<OrderedText> splitMessage = ChatMessages.breakRenderedChatMessageLines(text, width, mc.textRenderer);
-        Collections.reverse(splitMessage);
+        List<ChatHudLine> messages = ((ChatHudAccessor) mc.inGameHud.getChatHud()).getMessages();
 
         int index;
         for (index = 0; index < antiSpamDepth.get(); index++) {
-            List<ChatHudLine.Visible> visibleMessages = ((ChatHudAccessor) mc.inGameHud.getChatHud()).getVisibleMessages();
-            if (visibleMessages.isEmpty() || index > visibleMessages.size() - 1) return null;
+            if (messages.isEmpty() || index > messages.size() - 1) return null;
 
-            String messageToCheck = orderedTextToString(visibleMessages.get(index).content());
-            String newMessage = orderedTextToString(splitMessage.get(0));
+            MutableText message = messages.get(index).content().copy();
+            String messageToCheck = message.getString();
+            String newMessage = text.getString();
+
+            Matcher timestampMatcher = timestampRegex.matcher(messageToCheck);
+            if (timestampMatcher.find()) {
+                messageToCheck = messageToCheck.substring(8);
+            }
 
             if (messageToCheck.equals(newMessage)) {
-
-                /*  TODO
-                *   known issue - if the number appended to a spam message is on a separate line to the message it's representing, they will be counted as two separate
-                *   messages, leaving floating numbers in your chat if it gets hit again. For example:
-                *
-                *   Lorem ipsum dolor sit amet, consectetur adipiscing elit
-                *   (2)
-                *
-                *   if you send the message again, only the first line will be removed and spammed correctly, while the numbers are left over. This will also always
-                *   repeat, since if it gets spammed for a second time the numbers will be on a new line again. In fairness the same issue is present in the old system,
-                *   but included along the much more significant and prevalent issue that the lines aren't removed properly. It probably wouldn't be *too* bad to leave
-                *   this for now, but it would be nice to fix it.
-                 */
-
-                for (int j = 0; j < splitMessage.size(); j++) {
-                    if (!orderedTextToString(visibleMessages.get(index + j).content()).equals(orderedTextToString(splitMessage.get(j)))) {
-                        return null;
-                    }
-                }
-
                 returnText = text.copy().append(Text.literal(" (2)").formatted(Formatting.GRAY));
                 break;
             }
             else {
-                // possible error - if the number appended to the end of a spammed message is split across a line, this will fail, but this is very rare in comparison
-                // to the issue the changes fix
-
                 Matcher matcher = antiSpamRegex.matcher(messageToCheck);
                 if (!matcher.matches()) continue;
 
@@ -318,17 +290,6 @@ public class BetterChat extends Module {
                 String counter = " (" + number + ")";
 
                 if (messageToCheck.substring(0, messageToCheck.length() - counter.length()).equals(newMessage)) {
-                    for (int j = 0; j < splitMessage.size(); j++) {
-                        String a = orderedTextToString(visibleMessages.get(index + j).content());
-                        if (j == 0) a = a.substring(0, a.length() - counter.length());
-
-                        String b = orderedTextToString(splitMessage.get(j));
-
-                        if (!a.equals(b)) {
-                            return null;
-                        }
-                    }
-
                     returnText = text.copy().append(Text.literal(" (" + (number + 1) + ")").formatted(Formatting.GRAY));
                     break;
                 }
@@ -336,26 +297,41 @@ public class BetterChat extends Module {
         }
 
         if (returnText != null) {
-            List<ChatHudLine.Visible> visibleMessages = ((ChatHudAccessor) mc.inGameHud.getChatHud()).getVisibleMessages();
-
-            for (int j = splitMessage.size() - 1; j > -1; j--) {
-                visibleMessages.remove(index + j);
-            }
+            messages.remove(index);
+            refreshMessages();
         }
 
         return returnText;
     }
 
-    private String orderedTextToString(OrderedText orderedText) {
-        MutableText parsed = TextUtils.parseOrderedText(orderedText);
-        List<Text> siblings = parsed.getSiblings();
+    private void refreshMessages() {
+        List<ChatHudLine.Visible> visibleMessages = ((ChatHudAccessor) mc.inGameHud.getChatHud()).getVisibleMessages();
+        List<ChatHudLine> messages = ((ChatHudAccessor) mc.inGameHud.getChatHud()).getMessages();
+        int width = MathHelper.floor((double) mc.inGameHud.getChatHud().getWidth() / mc.inGameHud.getChatHud().getChatScale());
+        boolean focused = mc.currentScreen instanceof ChatScreen;
 
-        StringBuilder string = new StringBuilder();
-        for (Text sibling : siblings) {
-            string.append(sibling.getString());
+        visibleMessages.clear();
+
+        for (int i = messages.size() - 1; i >= 0; --i) {
+            ChatHudLine chatHudLine = messages.get(i);
+
+            if (chatHudLine.indicator() != null && chatHudLine.indicator().icon() != null) {
+                width -= chatHudLine.indicator().icon().width + 4 + 2;
+            }
+
+            List<OrderedText> list = ChatMessages.breakRenderedChatMessageLines(chatHudLine.content(), width, mc.textRenderer);
+
+            for (int j = 0; j < list.size(); ++j) {
+                OrderedText orderedText = list.get(j);
+                if (focused && ((ChatHudAccessor) mc.inGameHud.getChatHud()).getScrolledLines() > 0) {
+                    ((ChatHudAccessor) mc.inGameHud.getChatHud()).setHasUnreadNewMessages(true);
+                    mc.inGameHud.getChatHud().scroll(1);
+                }
+
+                boolean endOfEntry = j == list.size() - 1;
+                visibleMessages.add(0, new ChatHudLine.Visible(chatHudLine.creationTick(), orderedText, chatHudLine.indicator(), endOfEntry));
+            }
         }
-
-        return string.toString();
     }
 
     @EventHandler
