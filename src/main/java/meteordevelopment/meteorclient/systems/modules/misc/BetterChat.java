@@ -18,7 +18,6 @@ import meteordevelopment.meteorclient.utils.Utils;
 import meteordevelopment.meteorclient.utils.player.ChatUtils;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.gui.hud.ChatHudLine;
-import net.minecraft.client.gui.screen.ChatScreen;
 import net.minecraft.client.util.ChatMessages;
 import net.minecraft.text.*;
 import net.minecraft.util.Formatting;
@@ -92,8 +91,8 @@ public class BetterChat extends Module {
         .name("depth")
         .description("How many messages to filter.")
         .defaultValue(20)
-        .min(1)
-        .sliderMin(1)
+        .min(1).sliderMin(1)
+        .sliderMax(40) // arbitrary but twice the default isn't unreasonable
         .visible(antiSpam::get)
         .build()
     );
@@ -255,20 +254,26 @@ public class BetterChat extends Module {
         event.setMessage(message);
     }
 
-    /*
-     *  Rewritten once again to only check against and remove from ChatHud.messages, and to then recalculate all of ChatHud.visibleMessages. Not having to handle lines
-     *  and such makes the whole process a lot easier and neatly handles multi-line messages
-     */
-    private Text appendAntiSpam(Text text) {
-        Text returnText = null;
-        List<ChatHudLine> messages = ((ChatHudAccessor) mc.inGameHud.getChatHud()).getMessages();
 
+    private Text appendAntiSpam(Text text) {
         int index;
+        int lines = -1;
+        ChatHudLine message = null;
+        Text returnText = null;
+
+        List<ChatHudLine> messages = ((ChatHudAccessor) mc.inGameHud.getChatHud()).getMessages();
+        int width = MathHelper.floor((double) mc.inGameHud.getChatHud().getWidth() / mc.inGameHud.getChatHud().getChatScale());
+
         for (index = 0; index < antiSpamDepth.get(); index++) {
             if (messages.isEmpty() || index > messages.size() - 1) return null;
 
-            MutableText message = messages.get(index).content().copy();
-            String messageToCheck = message.getString();
+            message = messages.get(index);
+            if (message.indicator() != null && message.indicator().icon() != null) {
+                width -= message.indicator().icon().width + 4 + 2;
+            }
+            lines += ChatMessages.breakRenderedChatMessageLines(message.content().copy(), width, mc.textRenderer).size();
+
+            String messageToCheck = message.content().copy().getString();
             String newMessage = text.getString();
 
             Matcher timestampMatcher = timestampRegex.matcher(messageToCheck);
@@ -298,40 +303,14 @@ public class BetterChat extends Module {
 
         if (returnText != null) {
             messages.remove(index);
-            refreshMessages();
+
+            List<ChatHudLine.Visible> visibleMessages = ((ChatHudAccessor) mc.inGameHud.getChatHud()).getVisibleMessages();
+            for (int i = 0; i < ChatMessages.breakRenderedChatMessageLines(message.content().copy(), width, mc.textRenderer).size(); i++) {
+                visibleMessages.remove(lines - i);
+            }
         }
 
         return returnText;
-    }
-
-    private void refreshMessages() {
-        List<ChatHudLine.Visible> visibleMessages = ((ChatHudAccessor) mc.inGameHud.getChatHud()).getVisibleMessages();
-        List<ChatHudLine> messages = ((ChatHudAccessor) mc.inGameHud.getChatHud()).getMessages();
-        int width = MathHelper.floor((double) mc.inGameHud.getChatHud().getWidth() / mc.inGameHud.getChatHud().getChatScale());
-        boolean focused = mc.currentScreen instanceof ChatScreen;
-
-        visibleMessages.clear();
-
-        for (int i = messages.size() - 1; i >= 0; --i) {
-            ChatHudLine chatHudLine = messages.get(i);
-
-            if (chatHudLine.indicator() != null && chatHudLine.indicator().icon() != null) {
-                width -= chatHudLine.indicator().icon().width + 4 + 2;
-            }
-
-            List<OrderedText> list = ChatMessages.breakRenderedChatMessageLines(chatHudLine.content(), width, mc.textRenderer);
-
-            for (int j = 0; j < list.size(); ++j) {
-                OrderedText orderedText = list.get(j);
-                if (focused && ((ChatHudAccessor) mc.inGameHud.getChatHud()).getScrolledLines() > 0) {
-                    ((ChatHudAccessor) mc.inGameHud.getChatHud()).setHasUnreadNewMessages(true);
-                    mc.inGameHud.getChatHud().scroll(1);
-                }
-
-                boolean endOfEntry = j == list.size() - 1;
-                visibleMessages.add(0, new ChatHudLine.Visible(chatHudLine.creationTick(), orderedText, chatHudLine.indicator(), endOfEntry));
-            }
-        }
     }
 
     @EventHandler
