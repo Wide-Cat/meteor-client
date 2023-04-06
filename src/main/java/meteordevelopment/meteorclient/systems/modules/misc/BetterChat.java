@@ -287,7 +287,8 @@ public class BetterChat extends Module {
             }
             else {
                 Matcher matcher = antiSpamRegex.matcher(messageToCheck);
-                if (!matcher.matches()) continue;
+                // 'matches' returns true only if the whole string matches, 'find' returns true only if a subsequence matches
+                if (!matcher.matches() && !matcher.find()) continue;
 
                 String group = matcher.group(matcher.groupCount());
                 int number = Integer.parseInt(group.substring(1, group.length() - 1));
