@@ -355,22 +355,18 @@ public class BetterChat extends Module {
         while (hasText) {
             hasText = false;
             TextHandler.LineBreakingVisitor lineBreakingVisitor = (mc.textRenderer.getTextHandler()).new LineBreakingVisitor((float) width);
-            Iterator iterator = lineWrappingCollector.parts.iterator();
 
-            while (iterator.hasNext()) {
-                TextHandler.StyledString styledString = (TextHandler.StyledString) iterator.next();
+            for (TextHandler.StyledString styledString : lineWrappingCollector.parts) {
                 boolean noBreaks = TextVisitFactory.visitFormatted(styledString.literal, 0, styledString.style, Style.EMPTY, lineBreakingVisitor);
 
                 if (!noBreaks) {
                     int endIndex = lineBreakingVisitor.getEndingIndex();
-                    Style style2 = lineBreakingVisitor.getEndingStyle();
                     char c = lineWrappingCollector.charAt(endIndex);
-                    boolean linebreak = c == '\n';
-                    boolean whitespace = linebreak || c == ' ';
-                    lastCharLineBreak = linebreak;
-                    lines += 1;
+                    lastCharLineBreak = c == '\n';
 
-                    lineWrappingCollector.collectLine(endIndex, whitespace ? 1 : 0, style2);
+                    lineWrappingCollector.collectLine(endIndex, lastCharLineBreak || c == ' ' ? 1 : 0, lineBreakingVisitor.getEndingStyle());
+
+                    lines += 1;
                     hasText = true;
                     break;
                 }
@@ -379,8 +375,7 @@ public class BetterChat extends Module {
             }
         }
 
-        StringVisitable stringVisitable2 = lineWrappingCollector.collectRemainers();
-        if (stringVisitable2 != null) {
+        if (lineWrappingCollector.collectRemainers() != null) {
             lines += 1;
         } else if (lastCharLineBreak) {
             lines += 1;
