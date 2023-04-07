@@ -68,6 +68,15 @@ accessible   class   net/minecraft/client/gui/screen/ingame/BeaconScreen$EffectB
 accessible   class   net/minecraft/client/resource/ResourceReloadLogger$ReloadState
 
 accessible   field   net/minecraft/block/AbstractBlock collidable Z
-accessible field net/minecraft/util/math/Direction HORIZONTAL [Lnet/minecraft/util/math/Direction;
+accessible   field   net/minecraft/util/math/Direction HORIZONTAL [Lnet/minecraft/util/math/Direction;
 
 accessible   field   net/minecraft/item/ItemGroups INVENTORY Lnet/minecraft/item/ItemGroup;
+
+accessible   class   net/minecraft/client/font/TextHandler$StyledString
+accessible   field   net/minecraft/client/font/TextHandler$StyledString literal Ljava/lang/String;
+accessible   field   net/minecraft/client/font/TextHandler$StyledString style Lnet/minecraft/text/Style;
+
+accessible   class   net/minecraft/client/font/TextHandler$LineWrappingCollector
+accessible   field   net/minecraft/client/font/TextHandler$LineWrappingCollector parts Ljava/util/List;
+
+accessible   class   net/minecraft/client/font/TextHandler$LineBreakingVisitor

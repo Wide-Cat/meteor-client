@@ -5,6 +5,7 @@
 
 package meteordevelopment.meteorclient.systems.modules.misc;
 
+import com.google.common.collect.Lists;
 import it.unimi.dsi.fastutil.chars.Char2CharMap;
 import it.unimi.dsi.fastutil.chars.Char2CharOpenHashMap;
 import meteordevelopment.meteorclient.events.game.ReceiveMessageEvent;
@@ -17,8 +18,10 @@ import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.Utils;
 import meteordevelopment.meteorclient.utils.player.ChatUtils;
 import meteordevelopment.orbit.EventHandler;
+import net.minecraft.client.font.TextHandler;
 import net.minecraft.client.gui.hud.ChatHudLine;
 import net.minecraft.client.util.ChatMessages;
+import net.minecraft.client.util.TextCollector;
 import net.minecraft.text.*;
 import net.minecraft.util.Formatting;
 import net.minecraft.util.math.MathHelper;
@@ -45,7 +48,7 @@ public class BetterChat extends Module {
 
     private final Setting<Boolean> fancy = sgGeneral.add(new BoolSetting.Builder()
         .name("fancy-chat")
-        .description("Makes your messages fancy!") // probably about time this got fixed
+        .description("Makes your messages fancy!") // probably about time this got fixed - todo change this back when we fix font rendering
         .defaultValue(false)
         .build()
     );
@@ -258,24 +261,37 @@ public class BetterChat extends Module {
     private Text appendAntiSpam(Text text) {
         int index;
         int lines = -1;
-        ChatHudLine message = null;
+        int width = 0;
+
+        ChatHudLine message;
+        MutableText messageCopy = null;
         Text returnText = null;
 
         List<ChatHudLine> messages = ((ChatHudAccessor) mc.inGameHud.getChatHud()).getMessages();
-        int width = MathHelper.floor((double) mc.inGameHud.getChatHud().getWidth() / mc.inGameHud.getChatHud().getChatScale());
+        if (messages.isEmpty()) return null;
 
-        for (index = 0; index < antiSpamDepth.get(); index++) {
-            if (messages.isEmpty() || index > messages.size() - 1) return null;
-
+        for (index = 0; index < Math.min(antiSpamDepth.get(), messages.size()); index++) {
             message = messages.get(index);
+            messageCopy = message.content().copy();
+
+            String messageToCheck = messageCopy.getString();
+            String newMessage = text.getString();
+
+            // calculating the number of lines in visibleMessages we need to go back to start removing
+            width = MathHelper.floor((double) mc.inGameHud.getChatHud().getWidth() / mc.inGameHud.getChatHud().getChatScale());
             if (message.indicator() != null && message.indicator().icon() != null) {
                 width -= message.indicator().icon().width + 4 + 2;
             }
-            lines += ChatMessages.breakRenderedChatMessageLines(message.content().copy(), width, mc.textRenderer).size();
 
-            String messageToCheck = message.content().copy().getString();
-            String newMessage = text.getString();
+            TextCollector textCollector = new TextCollector();
+            messageCopy.visit((style, messagex) -> {
+                textCollector.add(StringVisitable.styled(getRenderedChatMessage(messagex), style));
+                return Optional.empty();
+            }, Style.EMPTY);
 
+            lines += Math.max(getLines(textCollector.getCombined(), width), 1); // if we're calling this at all on a message, it has to be *at least* one line long
+
+            // handling timestamps
             Matcher timestampMatcher = timestampRegex.matcher(messageToCheck);
             if (timestampMatcher.find()) {
                 messageToCheck = messageToCheck.substring(8);
@@ -287,7 +303,7 @@ public class BetterChat extends Module {
             }
             else {
                 Matcher matcher = antiSpamRegex.matcher(messageToCheck);
-                // 'matches' returns true only if the whole string matches, 'find' returns true only if a subsequence matches
+                // 'matches' returns true only if the whole string matches, 'find' returns true only if a subsequence matches - line breaks would cause this to fail otherwise
                 if (!matcher.matches() && !matcher.find()) continue;
 
                 String group = matcher.group(matcher.groupCount());
@@ -306,13 +322,73 @@ public class BetterChat extends Module {
             messages.remove(index);
 
             List<ChatHudLine.Visible> visibleMessages = ((ChatHudAccessor) mc.inGameHud.getChatHud()).getVisibleMessages();
-            for (int i = 0; i < ChatMessages.breakRenderedChatMessageLines(message.content().copy(), width, mc.textRenderer).size(); i++) {
+
+            for (int i = 0; i < ChatMessages.breakRenderedChatMessageLines(messageCopy, width, mc.textRenderer).size(); i++) {
                 visibleMessages.remove(lines - i);
             }
         }
 
         return returnText;
     }
+
+    private String getRenderedChatMessage(String message) {
+        return mc.options.getChatColors().getValue() ? message : Formatting.strip(message);
+    }
+
+    private int getLines(StringVisitable text, int width) {
+        int lines = 0;
+
+        List<TextHandler.StyledString> textList = Lists.newArrayList();
+        text.visit((style, text2) -> {
+            if (!text2.isEmpty()) {
+                textList.add(new TextHandler.StyledString(text2, style));
+            }
+
+            return Optional.empty();
+        }, Style.EMPTY);
+
+        TextHandler.LineWrappingCollector lineWrappingCollector = new TextHandler.LineWrappingCollector(textList);
+
+        boolean hasText = true;
+        boolean lastCharLineBreak = false;
+
+        while (hasText) {
+            hasText = false;
+            TextHandler.LineBreakingVisitor lineBreakingVisitor = (mc.textRenderer.getTextHandler()).new LineBreakingVisitor((float) width);
+            Iterator iterator = lineWrappingCollector.parts.iterator();
+
+            while (iterator.hasNext()) {
+                TextHandler.StyledString styledString = (TextHandler.StyledString) iterator.next();
+                boolean noBreaks = TextVisitFactory.visitFormatted(styledString.literal, 0, styledString.style, Style.EMPTY, lineBreakingVisitor);
+
+                if (!noBreaks) {
+                    int endIndex = lineBreakingVisitor.getEndingIndex();
+                    Style style2 = lineBreakingVisitor.getEndingStyle();
+                    char c = lineWrappingCollector.charAt(endIndex);
+                    boolean linebreak = c == '\n';
+                    boolean whitespace = linebreak || c == ' ';
+                    lastCharLineBreak = linebreak;
+                    lines += 1;
+
+                    lineWrappingCollector.collectLine(endIndex, whitespace ? 1 : 0, style2);
+                    hasText = true;
+                    break;
+                }
+
+                lineBreakingVisitor.offset(styledString.literal.length());
+            }
+        }
+
+        StringVisitable stringVisitable2 = lineWrappingCollector.collectRemainers();
+        if (stringVisitable2 != null) {
+            lines += 1;
+        } else if (lastCharLineBreak) {
+            lines += 1;
+        }
+
+        return lines;
+    }
+
 
     @EventHandler
     private void onMessageSend(SendMessageEvent event) {
@@ -377,7 +453,7 @@ public class BetterChat extends Module {
                 filterRegexList.add(Pattern.compile(regexFilters.get().get(i)));
             } catch (PatternSyntaxException e) {
                 String removed = regexFilters.get().remove(i);
-                error("Removing Invalid regex: %s", removed);
+                error("Removing invalid regex: %s", removed);
             }
         }
     }
