@@ -5,23 +5,24 @@
 
 package meteordevelopment.meteorclient.systems.modules.misc;
 
-import com.google.common.collect.Lists;
 import it.unimi.dsi.fastutil.chars.Char2CharMap;
 import it.unimi.dsi.fastutil.chars.Char2CharOpenHashMap;
 import meteordevelopment.meteorclient.events.game.ReceiveMessageEvent;
 import meteordevelopment.meteorclient.events.game.SendMessageEvent;
 import meteordevelopment.meteorclient.mixin.ChatHudAccessor;
+import meteordevelopment.meteorclient.mixin.TextHandlerAccessor;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.commands.Commands;
 import meteordevelopment.meteorclient.systems.modules.Categories;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.Utils;
+import meteordevelopment.meteorclient.utils.misc.text.TextUtils;
 import meteordevelopment.meteorclient.utils.player.ChatUtils;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.font.TextHandler;
+import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.hud.ChatHudLine;
 import net.minecraft.client.util.ChatMessages;
-import net.minecraft.client.util.TextCollector;
 import net.minecraft.text.*;
 import net.minecraft.util.Formatting;
 import net.minecraft.util.math.MathHelper;
@@ -257,6 +258,7 @@ public class BetterChat extends Module {
         event.setMessage(message);
     }
 
+    // Anti Spam
 
     private Text appendAntiSpam(Text text) {
         int index;
@@ -276,6 +278,7 @@ public class BetterChat extends Module {
 
             String messageToCheck = messageCopy.getString();
             String newMessage = text.getString();
+            System.out.println("to check: " + messageToCheck);
 
             // calculating the number of lines in visibleMessages we need to go back to start removing
             width = MathHelper.floor((double) mc.inGameHud.getChatHud().getWidth() / mc.inGameHud.getChatHud().getChatScale());
@@ -283,13 +286,9 @@ public class BetterChat extends Module {
                 width -= message.indicator().icon().width + 4 + 2;
             }
 
-            TextCollector textCollector = new TextCollector();
-            messageCopy.visit((style, messagex) -> {
-                textCollector.add(StringVisitable.styled(getRenderedChatMessage(messagex), style));
-                return Optional.empty();
-            }, Style.EMPTY);
-
-            lines += Math.max(getLines(textCollector.getCombined(), width), 1); // if we're calling this at all on a message, it has to be *at least* one line long
+            int l = Math.max(getLineCount(messageCopy, width, mc.textRenderer), 1);
+            System.out.println("l: " + l);
+            lines += l;
 
             // handling timestamps
             Matcher timestampMatcher = timestampRegex.matcher(messageToCheck);
@@ -323,7 +322,9 @@ public class BetterChat extends Module {
 
             List<ChatHudLine.Visible> visibleMessages = ((ChatHudAccessor) mc.inGameHud.getChatHud()).getVisibleMessages();
 
-            for (int i = 0; i < ChatMessages.breakRenderedChatMessageLines(messageCopy, width, mc.textRenderer).size(); i++) {
+            for (int i = 0; i < getLineCount(messageCopy, width, mc.textRenderer); i++) {
+                System.out.println("l: " + lines + ", i: " + i);
+                System.out.println(orderedTextToString(visibleMessages.get(lines - i).content()));
                 visibleMessages.remove(lines - i);
             }
         }
@@ -331,57 +332,87 @@ public class BetterChat extends Module {
         return returnText;
     }
 
-    private String getRenderedChatMessage(String message) {
-        return mc.options.getChatColors().getValue() ? message : Formatting.strip(message);
+    // it's just too easy for minegame
+    public static int getLineCount(StringVisitable message, int maxWidth, TextRenderer textRenderer) {
+        LineCounter counter = new LineCounter(maxWidth, textRenderer);
+        message.visit(counter, Style.EMPTY);
+        return counter.lineCount;
     }
 
-    private int getLines(StringVisitable text, int width) {
-        int lines = 0;
+    private static class LineCounter implements StringVisitable.StyledVisitor<Void>, CharacterVisitor {
+        public int lineCount;
 
-        List<TextHandler.StyledString> textList = Lists.newArrayList();
-        text.visit((style, text2) -> {
-            if (!text2.isEmpty()) {
-                textList.add(new TextHandler.StyledString(text2, style));
+        private float currentLineWidth;
+        private float currentWordWidth;
+
+        private final int maxWidth;
+        private final TextHandler.WidthRetriever widthRetriever;
+        private String message = "";
+
+        public LineCounter(int maxWidth, TextRenderer textRenderer) {
+            this.maxWidth = maxWidth;
+            this.widthRetriever = ((TextHandlerAccessor) textRenderer.getTextHandler()).getWidthRetriever();
+        }
+
+        @Override
+        public Optional<Void> accept(Style style, String message) {
+            if (lineCount == 0) {
+                lineCount = 1;
             }
+
+            TextVisitFactory.visitFormatted(message, style, this);
 
             return Optional.empty();
-        }, Style.EMPTY);
+        }
 
-        TextHandler.LineWrappingCollector lineWrappingCollector = new TextHandler.LineWrappingCollector(textList);
+        @Override
+        public boolean accept(int index, Style style, int codePoint) {
+            message += (char) codePoint;
 
-        boolean hasText = true;
-        boolean lastCharLineBreak = false;
+            if (codePoint == '\n') {
+                lineCount++;
 
-        while (hasText) {
-            hasText = false;
-            TextHandler.LineBreakingVisitor lineBreakingVisitor = (mc.textRenderer.getTextHandler()).new LineBreakingVisitor((float) width);
+                System.out.println(message);
+                message = "";
 
-            for (TextHandler.StyledString styledString : lineWrappingCollector.parts) {
-                boolean noBreaks = TextVisitFactory.visitFormatted(styledString.literal, 0, styledString.style, Style.EMPTY, lineBreakingVisitor);
+                currentLineWidth = 0;
+                currentWordWidth = 0;
+            }
+            else {
+                float width = widthRetriever.getWidth(codePoint, style);
 
-                if (!noBreaks) {
-                    int endIndex = lineBreakingVisitor.getEndingIndex();
-                    char c = lineWrappingCollector.charAt(endIndex);
-                    lastCharLineBreak = c == '\n';
+                currentLineWidth += width;
+                currentWordWidth += width;
 
-                    lineWrappingCollector.collectLine(endIndex, lastCharLineBreak || c == ' ' ? 1 : 0, lineBreakingVisitor.getEndingStyle());
+                if (currentLineWidth > maxWidth) {
+                    int maxWidthCountInWord = (int) (currentWordWidth / maxWidth);
+                    lineCount += maxWidthCountInWord == 0 ? 1 : maxWidthCountInWord;
+                    System.out.println(message);
 
-                    lines += 1;
-                    hasText = true;
-                    break;
+                    currentLineWidth = currentWordWidth - maxWidthCountInWord * maxWidth;
+                    currentWordWidth = currentLineWidth;
                 }
 
-                lineBreakingVisitor.offset(styledString.literal.length());
+                if (codePoint == ' ') {
+                    currentWordWidth = 0;
+                }
             }
+
+            return true;
+        }
+    }
+
+
+    private String orderedTextToString(OrderedText orderedText) {
+        MutableText parsed = TextUtils.parseOrderedText(orderedText);
+        List<Text> siblings = parsed.getSiblings();
+
+        StringBuilder string = new StringBuilder();
+        for (Text sibling : siblings) {
+            string.append(sibling.getString());
         }
 
-        if (lineWrappingCollector.collectRemainers() != null) {
-            lines += 1;
-        } else if (lastCharLineBreak) {
-            lines += 1;
-        }
-
-        return lines;
+        return string.toString();
     }
 
 
