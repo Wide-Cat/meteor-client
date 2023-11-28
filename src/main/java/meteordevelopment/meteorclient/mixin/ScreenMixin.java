@@ -7,6 +7,7 @@ package meteordevelopment.meteorclient.mixin;
 
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import meteordevelopment.meteorclient.commands.Commands;
+import meteordevelopment.meteorclient.commands.MeteorClickEvent;
 import meteordevelopment.meteorclient.systems.config.Config;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.systems.modules.render.NoRender;
@@ -37,5 +38,13 @@ public abstract class ScreenMixin {
                 e.printStackTrace();
             }
         }
+    }
+
+    @Inject(method = "handleTextClick", at = @At(value = "HEAD"), cancellable = true)
+    private void onInvalidClickEvent(Style style, CallbackInfoReturnable<Boolean> cir) {
+        if (!(style.getClickEvent() instanceof MeteorClickEvent meteorClickEvent)) return;
+
+        meteorClickEvent.runnable.run();
+        cir.setReturnValue(true);
     }
 }
